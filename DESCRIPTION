@@ -1,0 +1,31 @@
+Package: quallmer.app
+Title: Interactive Validation App for Quallmer
+Version: 0.1.0
+Authors@R: c(
+    person("Seraphine", "Maerz", , "seraphine.maerz@gmail.com", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0003-4289-2098"))
+    )
+Description: Provides an interactive Shiny application for manual coding,
+    reviewing LLM-generated annotations, and computing inter-rater reliability
+    metrics. Designed to work with the quallmer package for qualitative data
+    analysis with large language models.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Imports:
+    quallmer,
+    shiny,
+    bslib,
+    dplyr,
+    tidyr,
+    irr,
+    htmltools,
+    cli,
+    stats,
+    utils
+Suggests:
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+URL: https://seraphinem.github.io/quallmer.app/
+BugReports: https://github.com/SeraphineM/quallmer.app/issues
