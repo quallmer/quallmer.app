@@ -23,9 +23,26 @@ pak::pak("SeraphineM/quallmer.app")
 ```r
 library(quallmer.app)
 
-# Launch the validation app
-validate_app()
+# Launch the quallmer app
+qlm_app()
 ```
+
+### Using the Sample Data
+
+The package includes sample movie review data to help you learn the app:
+
+```r
+# Get the path to the sample data file
+sample_file <- system.file("extdata", "sample_data.rds", package = "quallmer.app")
+
+# Launch the app
+qlm_app()
+
+# In the app, upload the file at the path shown by:
+print(sample_file)
+```
+
+The sample dataset contains 20 movie reviews coded by three coders with a gold standard, perfect for testing inter-rater reliability and gold-standard validation features.
 
 ## Requirements
 

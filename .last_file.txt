@@ -1,0 +1,1 @@
+/Users/smaerz/Desktop/quallmer_app/quallmer_coding/sample_data.rds

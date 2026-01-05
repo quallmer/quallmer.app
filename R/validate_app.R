@@ -46,6 +46,19 @@ highlight_query <- function(text, query) {
   htmltools::HTML(marked)
 }
 
+#' @noRd
+prepare_comparison_data <- function(df, unit_id_col, coder_cols, code_var_name = "code") {
+  # Transform wide-format data (one column per coder) into list of data frames
+  # suitable for qlm_compare()
+  lapply(stats::setNames(coder_cols, coder_cols), function(coder_name) {
+    data.frame(
+      .id = df[[unit_id_col]],
+      code = df[[coder_name]],
+      stringsAsFactors = FALSE
+    )
+  })
+}
+
 # -------------------------------
 # Human check module (UI + server)
 # -------------------------------
@@ -187,7 +200,7 @@ humancheck_server <- function(
 
     assessed_path <- reactive({
       base_path <- req(original_file_name())
-      out_dir   <- dirname(base_path) # always the validate folder
+      out_dir   <- dirname(base_path) # always the quallmer_coding folder
       file.path(
         out_dir,
         paste0(
@@ -619,7 +632,7 @@ humancheck_server <- function(
 # Main App
 # -------------------------------
 
-#' Launch the Validate App
+#' Launch the Quallmer Interactive App
 #'
 #' Starts the Shiny app for manual coding, LLM checking,
 #' and validation / agreement calculation.
@@ -635,7 +648,7 @@ humancheck_server <- function(
 #'
 #' @return A shiny.appobj
 #' @export
-validate_app <- function(base_dir = getwd()) {
+qlm_app <- function(base_dir = getwd()) {
   ui <- fluidPage(
     theme = bs_theme(
       version        = 5,
@@ -653,7 +666,7 @@ validate_app <- function(base_dir = getwd()) {
         margin: 6px 0 12px 0;
       }
     "))),
-    div(class = "app-title", strong("Validate App")),
+    div(class = "app-title", strong("quallmer app")),
     sidebarLayout(
       sidebarPanel(
         width = 3,
@@ -686,7 +699,7 @@ validate_app <- function(base_dir = getwd()) {
         uiOutput("column_selectors"),
         br(),
         helpText(
-          "Progress is saved to *_assessed.rds in the validate folder"
+          "Progress is saved to *_assessed.rds in the quallmer_coding folder"
         )
       ),
       mainPanel(uiOutput("main_content"))
@@ -718,6 +731,7 @@ validate_app <- function(base_dir = getwd()) {
         coder_cols         = isolate(input$coder_cols),
         agreement_has_gold = isolate(input$agreement_has_gold),
         gold_col           = isolate(input$gold_col),
+        measurement_level  = isolate(input$measurement_level),
         hc_last_index      = get_hc_index()
       )
       try(saveRDS(st, state_path), silent = TRUE)
@@ -775,13 +789,13 @@ validate_app <- function(base_dir = getwd()) {
       if (is.null(p)) "No file loaded" else paste("Loaded:", basename(p))
     })
 
-    # Persist upload locally to validate folder and validate
+    # Persist upload locally to quallmer_coding folder
     observeEvent(input$file, {
       req(input$file)
-      validate_dir <- file.path(base_dir, "validate")
-      dir.create(validate_dir, showWarnings = FALSE, recursive = TRUE)
+      coding_dir <- file.path(base_dir, "quallmer_coding")
+      dir.create(coding_dir, showWarnings = FALSE, recursive = TRUE)
       dest <- normalizePath(
-        file.path(validate_dir, input$file$name),
+        file.path(coding_dir, input$file$name),
         mustWork = FALSE
       )
       if (!isTRUE(file.copy(input$file$datapath, dest, overwrite = TRUE))) {
@@ -902,6 +916,22 @@ validate_app <- function(base_dir = getwd()) {
                 isTRUE(st$agreement_has_gold)
               } else FALSE
             ),
+            selectInput(
+              "measurement_level",
+              "Measurement level:",
+              choices = c("nominal", "ordinal", "interval", "ratio"),
+              selected = if (!is.null(st) && !is.null(st$measurement_level)) {
+                st$measurement_level
+              } else "nominal"
+            ),
+            helpText(
+              tags$small(
+                tags$strong("Nominal:"), " unordered categories (e.g., topics, sentiment)", tags$br(),
+                tags$strong("Ordinal:"), " ordered categories (e.g., ratings 1-5, Likert scales)", tags$br(),
+                tags$strong("Interval:"), " numeric with equal intervals (e.g., temperature, dates)", tags$br(),
+                tags$strong("Ratio:"), " numeric with true zero (e.g., counts, word length)"
+              )
+            ),
             uiOutput("gold_ui")
           )
         }
@@ -959,7 +989,7 @@ validate_app <- function(base_dir = getwd()) {
           }),
           original_file_name = reactive({
             lf <- last_file()
-            if (is.null(lf) || !nzchar(lf)) "validate/unknown.csv" else lf
+            if (is.null(lf) || !nzchar(lf)) "quallmer_coding/unknown.csv" else lf
           }),
           meta_cols = reactive(if (mode %in% c("blind", "llm")) input$meta_cols else character())
         )
@@ -976,6 +1006,7 @@ validate_app <- function(base_dir = getwd()) {
     observeEvent(input$coder_cols,         save_state, ignoreInit = TRUE)
     observeEvent(input$agreement_has_gold, save_state, ignoreInit = TRUE)
     observeEvent(input$gold_col,           save_state, ignoreInit = TRUE)
+    observeEvent(input$measurement_level,  save_state, ignoreInit = TRUE)
     observeEvent({
       if (!is.null(hc)) hc$current_index()
     }, save_state, ignoreInit = TRUE)
@@ -984,10 +1015,16 @@ validate_app <- function(base_dir = getwd()) {
     output$main_content <- renderUI({
       if (is.null(dataset())) {
         tagList(
-          h3("Welcome to the Validate App"),
+          h3("Welcome to the quallmer app"),
           p("Step 1: Choose a file"),
           p("Step 2: Select mode"),
           p("Step 3: Select appropriate columns."),
+          hr(),
+          p(
+            strong("Try the sample data:"),
+            "Upload the sample file from",
+            code("inst/extdata/sample_data.rds")
+          ),
           hr(),
           h4("File Preview:"),
           tableOutput("data_preview")
@@ -1010,7 +1047,7 @@ validate_app <- function(base_dir = getwd()) {
     })
 
     # -------------------------------
-    # Validation / agreement mode (using validate())
+    # Validation / agreement mode (using qlm_compare() and qlm_validate())
     # -------------------------------
 
     # icr_result() returns a list with:
@@ -1023,12 +1060,44 @@ validate_app <- function(base_dir = getwd()) {
       unit_id    <- input$unit_id_col
       coder_cols <- input$coder_cols
 
-      if (is.null(unit_id) ||
-          !unit_id %in% names(df) ||
-          is.null(coder_cols) ||
-          length(coder_cols) < 2L ||
-          !all(coder_cols %in% names(df))) {
-        return(NULL)
+      # Validate inputs with helpful error messages
+      if (is.null(unit_id)) {
+        return(list(
+          kind = "message",
+          message = "Please select a Unit ID column."
+        ))
+      }
+
+      if (!unit_id %in% names(df)) {
+        return(list(
+          kind = "message",
+          message = sprintf("Selected Unit ID column '%s' not found in dataset. Available columns: %s",
+                            unit_id, paste(names(df), collapse = ", "))
+        ))
+      }
+
+      if (is.null(coder_cols) || length(coder_cols) == 0) {
+        return(list(
+          kind = "message",
+          message = "Please select at least 2 coder columns."
+        ))
+      }
+
+      if (length(coder_cols) < 2L) {
+        return(list(
+          kind = "message",
+          message = sprintf("Please select at least 2 coder columns. You selected: %d", length(coder_cols))
+        ))
+      }
+
+      missing_cols <- coder_cols[!coder_cols %in% names(df)]
+      if (length(missing_cols) > 0) {
+        return(list(
+          kind = "message",
+          message = sprintf("Selected coder columns not found in dataset: %s. Available columns: %s",
+                            paste(missing_cols, collapse = ", "),
+                            paste(names(df), collapse = ", "))
+        ))
       }
 
       # Gold-standard mode?
@@ -1041,17 +1110,82 @@ validate_app <- function(base_dir = getwd()) {
           ))
         }
 
-        res_gold <- tryCatch(
-          validate(
-            data       = df,
-            id         = unit_id,
-            coder_cols = coder_cols,
-            min_coders = 2L,
-            mode       = "gold",
-            gold       = gold
-          ),
-          error = function(e) e
-        )
+        res_gold <- tryCatch({
+          # Identify non-gold coders
+          non_gold_coders <- setdiff(coder_cols, gold)
+
+          # Create gold standard data frame
+          gold_df <- data.frame(
+            .id = df[[unit_id]],
+            code = df[[gold]],
+            stringsAsFactors = FALSE
+          )
+
+          # Validate each non-gold coder against gold standard
+          level <- input$measurement_level
+          confusion_matrices <- list()
+
+          results <- lapply(non_gold_coders, function(coder_name) {
+            # Create prediction data frame
+            pred_df <- data.frame(
+              .id = df[[unit_id]],
+              code = df[[coder_name]],
+              stringsAsFactors = FALSE
+            )
+
+            # Call qlm_validate
+            validation <- quallmer::qlm_validate(
+              x = pred_df,
+              gold = gold_df,
+              by = code,
+              level = level,
+              average = "macro"
+            )
+
+            # Store confusion matrix for nominal level
+            if (level == "nominal" && !is.null(validation$confusion)) {
+              confusion_matrices[[coder_name]] <<- validation$confusion
+            }
+
+            # Extract metrics based on measurement level
+            if (level == "nominal") {
+              data.frame(
+                coder = coder_name,
+                accuracy = validation$accuracy,
+                precision = validation$precision,
+                recall = validation$recall,
+                f1 = validation$f1,
+                stringsAsFactors = FALSE
+              )
+            } else if (level == "ordinal") {
+              data.frame(
+                coder = coder_name,
+                rho = validation$rho,
+                tau = validation$tau,
+                mae = validation$mae,
+                stringsAsFactors = FALSE
+              )
+            } else if (level %in% c("interval", "ratio")) {
+              data.frame(
+                coder = coder_name,
+                r = validation$r,
+                icc = validation$icc,
+                mae = validation$mae,
+                rmse = validation$rmse,
+                stringsAsFactors = FALSE
+              )
+            }
+          })
+
+          # Combine results into single data frame
+          metrics_df <- do.call(rbind, results)
+
+          # Return both metrics and confusion matrices
+          list(
+            metrics = metrics_df,
+            confusion_matrices = if (length(confusion_matrices) > 0) confusion_matrices else NULL
+          )
+        }, error = function(e) e)
 
         if (inherits(res_gold, "error")) {
           return(list(
@@ -1063,33 +1197,70 @@ validate_app <- function(base_dir = getwd()) {
         return(list(kind = "gold", data = res_gold))
       }
 
-      # Default: inter-rater reliability
-      res_icr <- tryCatch(
-        validate(
-          data       = df,
-          id         = unit_id,
-          coder_cols = coder_cols,
-          min_coders = 2L,
-          mode       = "icr",
-          output     = "list"
-        ),
-        error = function(e) e
-      )
+      # Default: inter-rater reliability using qlm_compare()
+      res_icr <- tryCatch({
+        # Check for missing data and warn user
+        n_total <- nrow(df)
+        missing_counts <- sapply(coder_cols, function(col) sum(is.na(df[[col]])))
+        total_missing <- sum(missing_counts > 0)
+
+        if (total_missing > 0) {
+          missing_info <- paste(
+            sapply(names(missing_counts[missing_counts > 0]), function(col) {
+              sprintf("%s: %d NAs", col, missing_counts[col])
+            }),
+            collapse = ", "
+          )
+          showNotification(
+            sprintf("Warning: Missing values detected (%s). These will be excluded from analysis.",
+                    missing_info),
+            type = "warning",
+            duration = 10
+          )
+        }
+
+        # Transform wide-format data into list of data frames for qlm_compare()
+        coder_dfs <- prepare_comparison_data(df, unit_id, coder_cols)
+
+        # Call qlm_compare with all coder data frames
+        comparison <- do.call(
+          quallmer::qlm_compare,
+          c(coder_dfs, list(by = quote(code), level = input$measurement_level, tolerance = 0))
+        )
+
+        # Extract metrics into a named list format
+        level <- input$measurement_level
+        metrics <- list()
+
+        if (level == "nominal") {
+          metrics$alpha_nominal <- comparison$alpha_nominal
+          metrics$kappa <- comparison$kappa
+          metrics$kappa_type <- comparison$kappa_type
+          metrics$percent_agreement <- comparison$percent_agreement
+        } else if (level == "ordinal") {
+          metrics$alpha_ordinal <- comparison$alpha_ordinal
+          if (!is.null(comparison$kappa_weighted)) metrics$kappa_weighted <- comparison$kappa_weighted
+          metrics$w <- comparison$w
+          metrics$rho <- comparison$rho
+          metrics$percent_agreement <- comparison$percent_agreement
+        } else if (level %in% c("interval", "ratio")) {
+          alpha_name <- paste0("alpha_", level)
+          metrics[[alpha_name]] <- comparison[[alpha_name]]
+          metrics$icc <- comparison$icc
+          metrics$r <- comparison$r
+          metrics$percent_agreement <- comparison$percent_agreement
+        }
+
+        metrics$subjects <- comparison$subjects
+        metrics$raters <- comparison$raters
+
+        metrics
+      }, error = function(e) e)
 
       if (inherits(res_icr, "error")) {
         return(list(
           kind    = "message",
           message = paste("Error during inter-rater reliability calculation:", res_icr$message)
-        ))
-      }
-
-      # If validate() returned only a message (no units with min_coders)
-      if (is.list(res_icr) &&
-          length(res_icr) == 1L &&
-          !is.null(res_icr$message)) {
-        return(list(
-          kind    = "message",
-          message = res_icr$message
         ))
       }
 
@@ -1128,8 +1299,8 @@ validate_app <- function(base_dir = getwd()) {
       }
 
       if (res$kind == "gold") {
-        # Already a nice data.frame
-        return(res$data)
+        # Return metrics data.frame
+        return(res$data$metrics)
       }
 
       # Fallback
@@ -1148,64 +1319,107 @@ validate_app <- function(base_dir = getwd()) {
       # ----- Inter-rater reliability interpretation -----
       if (res$kind == "icr") {
         lst <- res$data
-        alpha  <- suppressWarnings(as.numeric(lst[["kripp_alpha_nominal"]]))
-        fleiss <- suppressWarnings(as.numeric(lst[["fleiss_kappa"]]))
-        mkp    <- suppressWarnings(as.numeric(lst[["mean_pairwise_cohens_kappa"]]))
+        level <- input$measurement_level
+
+        # Build interpretation based on measurement level
+        interpretation_items <- list()
+
+        # Krippendorff's alpha (available for all levels)
+        alpha_name <- paste0("alpha_", level)
+        alpha <- suppressWarnings(as.numeric(lst[[alpha_name]]))
 
         txt_alpha <- if (is.na(alpha)) {
           "Krippendorff's alpha unavailable."
         } else if (alpha >= 0.8) {
-          "Krippendorff's alpha > 0.80 indicates good reliability."
+          sprintf("Krippendorff's alpha (%s) > 0.80 indicates good reliability.", level)
         } else if (alpha >= 0.67) {
-          "Krippendorff's alpha between 0.67 and 0.80 is acceptable for tentative conclusions."
+          sprintf("Krippendorff's alpha (%s) between 0.67 and 0.80 is acceptable for tentative conclusions.", level)
         } else {
-          "Krippendorff's alpha < 0.67 indicates low reliability."
+          sprintf("Krippendorff's alpha (%s) < 0.67 indicates low reliability.", level)
+        }
+        interpretation_items[[length(interpretation_items) + 1]] <- tags$li(txt_alpha)
+
+        # Kappa (nominal and ordinal)
+        if (level %in% c("nominal", "ordinal")) {
+          kappa <- suppressWarnings(as.numeric(lst[["kappa"]]))
+          kappa_type <- lst[["kappa_type"]]
+
+          # Landis & Koch for kappa
+          lk <- function(k) {
+            if (is.na(k)) "unavailable"
+            else if (k < 0)    "poor"
+            else if (k < 0.20) "slight"
+            else if (k < 0.40) "fair"
+            else if (k < 0.60) "moderate"
+            else if (k < 0.80) "substantial"
+            else               "almost perfect"
+          }
+
+          kappa_label <- if (!is.null(kappa_type) && nzchar(kappa_type)) {
+            paste0(kappa_type, " kappa")
+          } else if (level == "ordinal") {
+            "Weighted kappa"
+          } else {
+            "Kappa"
+          }
+
+          txt_kappa <- if (is.na(kappa)) {
+            sprintf("%s unavailable.", kappa_label)
+          } else {
+            sprintf("%s = %.2f (%s agreement).", kappa_label, kappa, lk(kappa))
+          }
+          interpretation_items[[length(interpretation_items) + 1]] <- tags$li(txt_kappa)
         }
 
-        # Landis & Koch for kappa
-        lk <- function(k) {
-          if (is.na(k)) "unavailable"
-          else if (k < 0)    "poor"
-          else if (k < 0.20) "slight"
-          else if (k < 0.40) "fair"
-          else if (k < 0.60) "moderate"
-          else if (k < 0.80) "substantial"
-          else               "almost perfect"
+        # ICC (interval/ratio)
+        if (level %in% c("interval", "ratio")) {
+          icc <- suppressWarnings(as.numeric(lst[["icc"]]))
+          txt_icc <- if (is.na(icc)) {
+            "ICC unavailable."
+          } else if (icc >= 0.75) {
+            sprintf("ICC = %.2f indicates excellent reliability.", icc)
+          } else if (icc >= 0.60) {
+            sprintf("ICC = %.2f indicates good reliability.", icc)
+          } else if (icc >= 0.40) {
+            sprintf("ICC = %.2f indicates fair reliability.", icc)
+          } else {
+            sprintf("ICC = %.2f indicates poor reliability.", icc)
+          }
+          interpretation_items[[length(interpretation_items) + 1]] <- tags$li(txt_icc)
         }
 
-        txt_fleiss <- if (is.na(fleiss)) {
-          "Fleiss' kappa unavailable."
-        } else {
-          sprintf("Fleiss' kappa = %.2f (%s agreement).", fleiss, lk(fleiss))
-        }
-
-        txt_mkp <- if (is.na(mkp)) {
-          NULL
-        } else {
-          sprintf("Mean pairwise Cohen's kappa = %.2f (%s).", mkp, lk(mkp))
+        # Correlation metrics
+        if (level == "ordinal") {
+          rho <- suppressWarnings(as.numeric(lst[["rho"]]))
+          if (!is.na(rho)) {
+            interpretation_items[[length(interpretation_items) + 1]] <- tags$li(
+              sprintf("Spearman's rho = %.2f (rank correlation)", rho)
+            )
+          }
+        } else if (level %in% c("interval", "ratio")) {
+          r <- suppressWarnings(as.numeric(lst[["r"]]))
+          if (!is.na(r)) {
+            interpretation_items[[length(interpretation_items) + 1]] <- tags$li(
+              sprintf("Pearson's r = %.2f (linear correlation)", r)
+            )
+          }
         }
 
         return(tagList(
           br(),
           tags$p("Interpretation guidance:"),
-          tags$ul(
-            tags$li(txt_alpha),
-            tags$li(txt_fleiss),
-            if (!is.null(txt_mkp)) tags$li(txt_mkp)
-          )
+          tags$ul(interpretation_items)
         ))
       }
 
-      # ----- Gold-standard interpretation (accuracy / precision / recall / F1) -----
+      # ----- Gold-standard interpretation -----
       if (res$kind == "gold") {
-        df <- res$data
+        df <- res$data$metrics
         if (!nrow(df)) return(NULL)
 
-        # Mean metrics across all non-gold coders
-        m_acc  <- suppressWarnings(mean(df$accuracy,        na.rm = TRUE))
-        m_prec <- suppressWarnings(mean(df$precision_macro, na.rm = TRUE))
-        m_rec  <- suppressWarnings(mean(df$recall_macro,    na.rm = TRUE))
-        m_f1   <- suppressWarnings(mean(df$f1_macro,        na.rm = TRUE))
+        level <- input$measurement_level
+        interpretation_items <- list()
+        fmt <- function(x) if (is.na(x)) "NA" else sprintf("%.2f", x)
 
         score_label <- function(x) {
           if (is.na(x))            "unavailable"
@@ -1215,43 +1429,89 @@ validate_app <- function(base_dir = getwd()) {
           else                     "low"
         }
 
-        fmt <- function(x) if (is.na(x)) "NA" else sprintf("%.2f", x)
+        if (level == "nominal") {
+          # Nominal: accuracy, precision, recall, F1
+          m_acc  <- suppressWarnings(mean(df$accuracy, na.rm = TRUE))
+          m_prec <- suppressWarnings(mean(df$precision, na.rm = TRUE))
+          m_rec  <- suppressWarnings(mean(df$recall, na.rm = TRUE))
+          m_f1   <- suppressWarnings(mean(df$f1, na.rm = TRUE))
 
-        txt_acc  <- sprintf(
-          "Accuracy (mean across coders = %s) measures the share of units where the model matches the gold-standard label. Values above ~0.80 are typically considered good, above ~0.90 excellent.",
-          fmt(m_acc)
-        )
-        txt_prec <- sprintf(
-          "Macro precision (mean = %s) is the average, across classes, of how often a predicted label is correct when it is used. Low precision means many false positives.",
-          fmt(m_prec)
-        )
-        txt_rec  <- sprintf(
-          "Macro recall (mean = %s) is the average, across classes, of how many gold-standard instances are successfully recovered. Low recall means many false negatives.",
-          fmt(m_rec)
-        )
-        txt_f1   <- sprintf(
-          "Macro F1 (mean = %s) is the harmonic mean of macro precision and macro recall. It summarizes the balance between missing true cases and producing false alarms.",
-          fmt(m_f1)
-        )
+          interpretation_items <- list(
+            tags$li(sprintf(
+              "Accuracy (mean across coders = %s) measures the share of units where the coder matches the gold-standard label. Values above ~0.80 are typically considered good, above ~0.90 excellent.",
+              fmt(m_acc)
+            )),
+            tags$li(sprintf(
+              "Macro precision (mean = %s) is the average, across classes, of how often a predicted label is correct when it is used. Low precision means many false positives.",
+              fmt(m_prec)
+            )),
+            tags$li(sprintf(
+              "Macro recall (mean = %s) is the average, across classes, of how many gold-standard instances are successfully recovered. Low recall means many false negatives.",
+              fmt(m_rec)
+            )),
+            tags$li(sprintf(
+              "Macro F1 (mean = %s) is the harmonic mean of macro precision and macro recall. It summarizes the balance between missing true cases and producing false alarms.",
+              fmt(m_f1)
+            )),
+            tags$li(sprintf(
+              "Overall, these scores are %s for accuracy, %s for precision, %s for recall, and %s for F1.",
+              score_label(m_acc),
+              score_label(m_prec),
+              score_label(m_rec),
+              score_label(m_f1)
+            ))
+          )
+        } else if (level == "ordinal") {
+          # Ordinal: rho, tau, MAE
+          m_rho <- suppressWarnings(mean(df$rho, na.rm = TRUE))
+          m_tau <- suppressWarnings(mean(df$tau, na.rm = TRUE))
+          m_mae <- suppressWarnings(mean(df$mae, na.rm = TRUE))
+
+          interpretation_items <- list(
+            tags$li(sprintf(
+              "Spearman's rho (mean = %s) measures rank correlation between coders and gold standard. Values closer to 1 indicate better agreement.",
+              fmt(m_rho)
+            )),
+            tags$li(sprintf(
+              "Kendall's tau (mean = %s) is another rank correlation measure, less sensitive to outliers. Values closer to 1 indicate better agreement.",
+              fmt(m_tau)
+            )),
+            tags$li(sprintf(
+              "Mean Absolute Error (mean = %s) measures the average distance between coder ratings and gold standard. Lower values indicate better agreement.",
+              fmt(m_mae)
+            ))
+          )
+        } else if (level %in% c("interval", "ratio")) {
+          # Interval/Ratio: r, ICC, MAE, RMSE
+          m_r <- suppressWarnings(mean(df$r, na.rm = TRUE))
+          m_icc <- suppressWarnings(mean(df$icc, na.rm = TRUE))
+          m_mae <- suppressWarnings(mean(df$mae, na.rm = TRUE))
+          m_rmse <- suppressWarnings(mean(df$rmse, na.rm = TRUE))
+
+          interpretation_items <- list(
+            tags$li(sprintf(
+              "Pearson's r (mean = %s) measures linear correlation between coders and gold standard. Values closer to 1 indicate better agreement.",
+              fmt(m_r)
+            )),
+            tags$li(sprintf(
+              "ICC (mean = %s) measures consistency between coders and gold standard. Values >0.75 are excellent, >0.60 good, >0.40 fair.",
+              fmt(m_icc)
+            )),
+            tags$li(sprintf(
+              "Mean Absolute Error (mean = %s) measures average distance between coder values and gold standard. Lower values indicate better agreement.",
+              fmt(m_mae)
+            )),
+            tags$li(sprintf(
+              "Root Mean Squared Error (mean = %s) penalizes larger errors more than MAE. Lower values indicate better agreement.",
+              fmt(m_rmse)
+            ))
+          )
+        }
 
         return(tagList(
           br(),
-          tags$p("Interpretation guidance (gold-standard comparison):"),
-          tags$ul(
-            tags$li(txt_acc),
-            tags$li(txt_prec),
-            tags$li(txt_rec),
-            tags$li(txt_f1),
-            tags$li(
-              sprintf(
-                "Overall, these scores are %s for accuracy, %s for precision, %s for recall, and %s for F1.",
-                score_label(m_acc),
-                score_label(m_prec),
-                score_label(m_rec),
-                score_label(m_f1)
-              )
-            )
-          )
+          tags$p(sprintf("Interpretation guidance (gold-standard comparison, %s level):", level)),
+          tags$ul(interpretation_items)
         ))
       }
 
@@ -1276,7 +1536,29 @@ validate_app <- function(base_dir = getwd()) {
         } else if (res$kind == "icr") {
           as.data.frame(as.list(res$data), stringsAsFactors = FALSE)
         } else if (res$kind == "gold") {
-          res$data
+          # For gold-standard validation, export metrics and confusion matrices
+          metrics_df <- res$data$metrics
+          confusion_matrices <- res$data$confusion_matrices
+
+          if (!is.null(confusion_matrices) && length(confusion_matrices) > 0) {
+            # Create a comprehensive export with confusion matrices
+            # Write metrics first
+            cat("Validation Metrics\n", file = file)
+            utils::write.table(metrics_df, file = file, append = TRUE,
+                               sep = ",", row.names = FALSE)
+
+            # Add confusion matrices for each coder
+            for (coder_name in names(confusion_matrices)) {
+              cat("\n\nConfusion Matrix -", coder_name, "\n", file = file, append = TRUE)
+              cm <- as.data.frame.table(confusion_matrices[[coder_name]])
+              names(cm) <- c("Predicted", "Actual", "Count")
+              utils::write.table(cm, file = file, append = TRUE,
+                                 sep = ",", row.names = FALSE)
+            }
+            return()  # Exit early since we handled the file writing
+          } else {
+            metrics_df
+          }
         } else {
           data.frame(
             message = "Unknown result type.",
