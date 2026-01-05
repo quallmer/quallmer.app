@@ -2,9 +2,17 @@ Package: quallmer.app
 Title: Interactive Validation App for Quallmer
 Version: 0.1.0
 Authors@R: c(
-    person("Seraphine", "Maerz", , "seraphine.maerz@gmail.com", role = c("aut", "cre"),
-           comment = c(ORCID = "0000-0003-4289-2098"))
+    person(
+      "Seraphine F.", "Maerz",
+      email = "seraphine.maerz@unimelb.edu.au",
+      role = c("aut", "cre"), comment = c(ORCID = "0000-0002-7173-9617")
+    ),
+    person(
+      "Kenneth", "Benoit",
+      email = "kbenoit@smu.edu.sg",
+      role = c("aut"), comment = c(ORCID = "0000-0002-0797-564X")
     )
+  )
 Description: Provides an interactive Shiny application for manual coding,
     reviewing LLM-generated annotations, and computing inter-rater reliability
     metrics. Designed to work with the quallmer package for qualitative data
