@@ -670,7 +670,18 @@ qlm_app <- function(base_dir = getwd()) {
     sidebarLayout(
       sidebarPanel(
         width = 3,
-        h4("1. Select a data file"),
+        h4("1. Specify your data folder"),
+        textInput(
+          "folder_name",
+          "Folder name (required):",
+          value = "",
+          placeholder = "e.g., your_name_coding"
+        ),
+        helpText(
+          tags$small("Specify a unique folder name to save your coding work. This prevents overwriting other users' data.")
+        ),
+        hr(),
+        h4("2. Select a data file"),
         fileInput(
           "file",
           "Choose a data file (.rds or .csv):",
@@ -685,7 +696,7 @@ qlm_app <- function(base_dir = getwd()) {
           class = "btn btn-secondary w-100"
         ),
         hr(),
-        h4("2. Choose mode"),
+        h4("3. Choose mode"),
         radioButtons(
           "mode", "Mode:",
           choices = c(
@@ -699,7 +710,7 @@ qlm_app <- function(base_dir = getwd()) {
         uiOutput("column_selectors"),
         br(),
         helpText(
-          "Progress is saved to *_assessed.rds in the quallmer_coding folder"
+          "Progress is saved to *_assessed.rds in your specified folder"
         )
       ),
       mainPanel(uiOutput("main_content"))
@@ -710,7 +721,11 @@ qlm_app <- function(base_dir = getwd()) {
     dataset   <- reactiveVal(NULL)
     last_file <- reactiveVal(NULL)
 
-    state_path <- file.path(base_dir, ".app_state.rds")
+    state_path <- reactive({
+      folder <- input$folder_name
+      if (is.null(folder) || !nzchar(trimws(folder))) return(NULL)
+      file.path(base_dir, trimws(folder), ".app_state.rds")
+    })
     hc         <- NULL
 
     get_hc_index <- function() {
@@ -720,7 +735,11 @@ qlm_app <- function(base_dir = getwd()) {
     }
 
     save_state <- function() {
+      sp <- tryCatch(state_path(), error = function(e) NULL)
+      if (is.null(sp)) return(invisible(NULL))
+
       st <- list(
+        folder_name        = isolate(input$folder_name),
         last_file          = tryCatch(isolate(last_file()), error = function(e) NULL),
         mode               = input$mode,
         text_col           = isolate(input$text_col),
@@ -734,51 +753,57 @@ qlm_app <- function(base_dir = getwd()) {
         measurement_level  = isolate(input$measurement_level),
         hc_last_index      = get_hc_index()
       )
-      try(saveRDS(st, state_path), silent = TRUE)
+      dir.create(dirname(sp), recursive = TRUE, showWarnings = FALSE)
+      try(saveRDS(st, sp), silent = TRUE)
     }
 
-    # Restore last file and mode
+    # Restore folder name and state
     observe({
-      st <- if (file.exists(state_path)) {
-        tryCatch(readRDS(state_path), error = function(e) NULL)
-      } else {
-        NULL
-      }
-      if (!is.null(st)) {
-        if (!is.null(st$last_file) &&
-            file.exists(st$last_file) &&
-            is.null(dataset())) {
-          obj <- tryCatch(
-            read_data_file(st$last_file, basename(st$last_file)),
-            error = function(e) {
-              showNotification(e$message, type = "error")
-              NULL
+      # Try to find a previously used folder
+      folders <- list.dirs(base_dir, recursive = FALSE, full.names = FALSE)
+      folders_with_state <- folders[sapply(folders, function(f) {
+        file.exists(file.path(base_dir, f, ".app_state.rds"))
+      })]
+
+      # If there's exactly one folder with state, restore it
+      if (length(folders_with_state) == 1 && is.null(dataset())) {
+        folder <- folders_with_state[1]
+        sp <- file.path(base_dir, folder, ".app_state.rds")
+
+        if (file.exists(sp)) {
+          st <- tryCatch(readRDS(sp), error = function(e) NULL)
+
+          if (!is.null(st)) {
+            # Restore folder name
+            if (!is.null(st$folder_name) && nzchar(st$folder_name)) {
+              updateTextInput(session, "folder_name", value = st$folder_name)
             }
-          )
-          if (!is.null(obj) && is.data.frame(obj)) {
-            dataset(obj)
-            last_file(st$last_file)
-          }
-          if (!is.null(obj) && !is.data.frame(obj)) {
-            showNotification(
-              "Wrong format: please upload a .rds or .csv that contains a data frame.",
-              type = "error"
-            )
-          }
-        }
-        if (!is.null(st$mode)) {
-          updateRadioButtons(session, "mode", selected = st$mode)
-        }
-      } else if (is.null(dataset()) && file.exists(file.path(base_dir, ".last_file.txt"))) {
-        lf <- readLines(file.path(base_dir, ".last_file.txt"), warn = FALSE)
-        if (length(lf) == 1 && nzchar(lf) && file.exists(lf)) {
-          obj <- tryCatch(
-            read_data_file(lf, basename(lf)),
-            error = function(e) NULL
-          )
-          if (!is.null(obj) && is.data.frame(obj)) {
-            dataset(obj)
-            last_file(lf)
+
+            # Restore last file
+            if (!is.null(st$last_file) && file.exists(st$last_file)) {
+              obj <- tryCatch(
+                read_data_file(st$last_file, basename(st$last_file)),
+                error = function(e) {
+                  showNotification(e$message, type = "error")
+                  NULL
+                }
+              )
+              if (!is.null(obj) && is.data.frame(obj)) {
+                dataset(obj)
+                last_file(st$last_file)
+              }
+              if (!is.null(obj) && !is.data.frame(obj)) {
+                showNotification(
+                  "Wrong format: please upload a .rds or .csv that contains a data frame.",
+                  type = "error"
+                )
+              }
+            }
+
+            # Restore mode
+            if (!is.null(st$mode)) {
+              updateRadioButtons(session, "mode", selected = st$mode)
+            }
           }
         }
       }
@@ -789,10 +814,22 @@ qlm_app <- function(base_dir = getwd()) {
       if (is.null(p)) "No file loaded" else paste("Loaded:", basename(p))
     })
 
-    # Persist upload locally to quallmer_coding folder
+    # Persist upload locally to user-specified folder
     observeEvent(input$file, {
       req(input$file)
-      coding_dir <- file.path(base_dir, "quallmer_coding")
+
+      # Validate folder name is provided
+      folder <- input$folder_name
+      if (is.null(folder) || !nzchar(trimws(folder))) {
+        showNotification(
+          "Please specify a folder name before uploading a file.",
+          type = "error",
+          duration = 5
+        )
+        return()
+      }
+
+      coding_dir <- file.path(base_dir, trimws(folder))
       dir.create(coding_dir, showWarnings = FALSE, recursive = TRUE)
       dest <- normalizePath(
         file.path(coding_dir, input$file$name),
@@ -819,17 +856,16 @@ qlm_app <- function(base_dir = getwd()) {
       }
       dataset(obj)
       last_file(dest)
-      writeLines(dest, file.path(base_dir, ".last_file.txt"))
       save_state()
     }, ignoreInit = TRUE)
 
     # Save and reset
     observeEvent(input$reset_btn, {
-      if (file.exists(state_path))       try(unlink(state_path), silent = TRUE)
-      last_file_txt <- file.path(base_dir, ".last_file.txt")
-      if (file.exists(last_file_txt)) try(unlink(last_file_txt), silent = TRUE)
+      sp <- tryCatch(state_path(), error = function(e) NULL)
+      if (!is.null(sp) && file.exists(sp)) try(unlink(sp), silent = TRUE)
       dataset(NULL)
       last_file(NULL)
+      updateTextInput(session, "folder_name", value = "")
       showNotification("App reset. You can load a new file now.", type = "message")
     })
 
@@ -838,15 +874,16 @@ qlm_app <- function(base_dir = getwd()) {
       req(dataset())
       if (!is.data.frame(dataset())) return(NULL)
       cols <- names(dataset())
-      st <- if (file.exists(state_path)) {
-        tryCatch(readRDS(state_path), error = function(e) NULL)
+      sp <- tryCatch(state_path(), error = function(e) NULL)
+      st <- if (!is.null(sp) && file.exists(sp)) {
+        tryCatch(readRDS(sp), error = function(e) NULL)
       } else {
         NULL
       }
       mode <- input$mode
 
       tagList(
-        h4("3. Select columns"),
+        h4("4. Select columns"),
         if (mode %in% c("blind", "llm")) {
           tagList(
             selectInput(
@@ -943,8 +980,9 @@ qlm_app <- function(base_dir = getwd()) {
       req(dataset(), input$mode == "agreement")
       if (!isTRUE(input$agreement_has_gold)) return(NULL)
       cols <- names(dataset())
-      st <- if (file.exists(state_path)) {
-        tryCatch(readRDS(state_path), error = function(e) NULL)
+      sp <- tryCatch(state_path(), error = function(e) NULL)
+      st <- if (!is.null(sp) && file.exists(sp)) {
+        tryCatch(readRDS(sp), error = function(e) NULL)
       } else {
         NULL
       }
@@ -997,6 +1035,7 @@ qlm_app <- function(base_dir = getwd()) {
     })
 
     # Persist state on changes
+    observeEvent(input$folder_name,        save_state, ignoreInit = TRUE)
     observeEvent(input$mode,               save_state, ignoreInit = FALSE)
     observeEvent(input$text_col,           save_state, ignoreInit = TRUE)
     observeEvent(input$meta_cols,          save_state, ignoreInit = TRUE)
@@ -1016,9 +1055,10 @@ qlm_app <- function(base_dir = getwd()) {
       if (is.null(dataset())) {
         tagList(
           h3("Welcome to the quallmer app"),
-          p("Step 1: Choose a file"),
-          p("Step 2: Select mode"),
-          p("Step 3: Select appropriate columns."),
+          p("Step 1: Specify your data folder (required)"),
+          p("Step 2: Choose a file"),
+          p("Step 3: Select mode"),
+          p("Step 4: Select appropriate columns."),
           hr(),
           p(
             strong("Try the sample data:"),
