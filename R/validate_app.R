@@ -91,13 +91,48 @@ humancheck_ui <- function(id) {
           padding: 10px;
         }
         .small-box {
-          max-height: 220px;
+          max-height: 180px;
           overflow-y: auto;
           background: #fff;
           border: 1px solid #ddd;
           border-radius: 8px;
           padding: 6px;
           margin-bottom: 6px;
+        }
+        .text-box {
+          max-height: 280px;
+          overflow-y: auto;
+          background: #fff;
+          border: 1px solid #ddd;
+          border-radius: 8px;
+          padding: 8px;
+          margin-bottom: 8px;
+          font-size: 0.85rem;
+          white-space: pre-wrap;
+          word-wrap: break-word;
+        }
+        .score-box {
+          max-height: 80px;
+          overflow-y: auto;
+          background: #f8f9fa;
+          border: 1px solid #ddd;
+          border-radius: 8px;
+          padding: 4px 8px;
+          margin-bottom: 6px;
+          font-weight: 600;
+        }
+        .llm-section {
+          margin-bottom: 12px;
+          padding-bottom: 8px;
+          border-bottom: 1px solid #eee;
+        }
+        .llm-section:last-child {
+          border-bottom: none;
+        }
+        .llm-label {
+          font-size: 0.75rem;
+          color: #6c757d;
+          margin-bottom: 2px;
         }
         .progress-bar {
           height: 5px;
@@ -188,8 +223,9 @@ humancheck_server <- function(
     data,
     text_col,
     blind = reactive(TRUE),
-    llm_output_col = reactive(NULL),
-    llm_evidence_col = reactive(NULL), # internally named evidence; UI shows justification
+    llm_output_cols = reactive(NULL),    # vector of LLM output column names
+    llm_evidence_cols = reactive(NULL),  # vector of justification column names
+    llm_score_cols = reactive(NULL),     # vector of score column names
     original_file_name = reactive("data.csv"),
     meta_cols = reactive(character())
 ) {
@@ -241,7 +277,7 @@ humancheck_server <- function(
     observeEvent(
       list(
         data(), text_col(), blind(),
-        llm_output_col(), llm_evidence_col(),
+        llm_output_cols(), llm_evidence_cols(), llm_score_cols(),
         original_file_name(), meta_cols()
       ),
       {
@@ -377,57 +413,78 @@ humancheck_server <- function(
       priority   = 10
     )
 
-    # LLM side panel in sidebar
+    # LLM side panel in sidebar - supports multiple columns
     output$llm_side <- renderUI({
       req(rv$df)
       if (isTRUE(blind())) return(NULL)
-      out_col <- llm_output_col()
-      just_col  <- llm_evidence_col()
-      tagList(
-        h5("LLM output / justification"),
-        if (!is.null(out_col) && nzchar(out_col) && out_col %in% names(rv$df)) {
+
+      out_cols  <- llm_output_cols()
+      just_cols <- llm_evidence_cols()
+      score_cols <- llm_score_cols()
+      i <- current_index()
+      df_names <- names(rv$df)
+
+      # Filter to valid columns
+      valid_out  <- if (!is.null(out_cols)) out_cols[out_cols %in% df_names] else character()
+      valid_just <- if (!is.null(just_cols)) just_cols[just_cols %in% df_names] else character()
+      valid_score <- if (!is.null(score_cols)) score_cols[score_cols %in% df_names] else character()
+
+      if (length(valid_out) == 0) {
+        return(tagList(
+          h5("LLM outputs"),
           div(
             class = "small-box",
-            strong("LLM output:"),
-            verbatimTextOutput(ns("llm_output"))
-          )
-        } else {
-          div(
-            class = "small-box",
-            strong("LLM output:"),
-            span("Select a valid LLM output column.",
+            span("Select at least one LLM output column.",
                  style = "color:#dc3545")
           )
-        },
-        if (!is.null(just_col) && nzchar(just_col) &&
-            !identical(just_col, "None") &&
-            just_col %in% names(rv$df)) {
-          div(
-            class = "small-box",
-            strong("LLM justification:"),
-            verbatimTextOutput(ns("llm_justification"))
-          )
-        } else NULL
-      )
-    })
-
-    output$llm_output <- renderText({
-      if (isTRUE(blind())) return("")
-      col <- llm_output_col()
-      if (is.null(col) || !nzchar(col) || !(col %in% names(rv$df))) return("")
-      i <- current_index()
-      na_to_empty(rv$df[[col]][i])
-    })
-
-    output$llm_justification <- renderText({
-      if (isTRUE(blind())) return("")
-      col <- llm_evidence_col()
-      if (is.null(col) || !nzchar(col) || identical(col, "None") ||
-          !(col %in% names(rv$df))) {
-        return("")
+        ))
       }
-      i <- current_index()
-      na_to_empty(rv$df[[col]][i])
+
+      # Build UI elements for each column type
+      output_elements <- lapply(valid_out, function(col) {
+        val <- na_to_empty(rv$df[[col]][i])
+        div(
+          class = "llm-section",
+          div(class = "llm-label", col),
+          div(class = "text-box", val)
+        )
+      })
+
+      justification_elements <- if (length(valid_just) > 0) {
+        lapply(valid_just, function(col) {
+          val <- na_to_empty(rv$df[[col]][i])
+          div(
+            class = "llm-section",
+            div(class = "llm-label", paste0(col, " (justification)")),
+            div(class = "text-box", val)
+          )
+        })
+      } else NULL
+
+      score_elements <- if (length(valid_score) > 0) {
+        lapply(valid_score, function(col) {
+          val <- rv$df[[col]][i]
+          val_str <- if (is.na(val)) "NA" else as.character(val)
+          div(
+            class = "llm-section",
+            div(class = "llm-label", paste0(col, " (score)")),
+            div(class = "score-box", val_str)
+          )
+        })
+      } else NULL
+
+      tagList(
+        h5("LLM outputs"),
+        output_elements,
+        if (length(valid_just) > 0) tagList(
+          h5("Justifications", style = "margin-top: 12px;"),
+          justification_elements
+        ),
+        if (length(valid_score) > 0) tagList(
+          h5("Scores", style = "margin-top: 12px;"),
+          score_elements
+        )
+      )
     })
 
     # Mode-specific fields (score vs status)
@@ -744,8 +801,9 @@ qlm_app <- function(base_dir = getwd()) {
         mode               = input$mode,
         text_col           = isolate(input$text_col),
         meta_cols          = isolate(input$meta_cols),
-        llm_output_col     = isolate(input$llm_output_col),
-        llm_evidence_col   = isolate(input$llm_evidence_col),
+        llm_output_cols    = isolate(input$llm_output_cols),
+        llm_evidence_cols  = isolate(input$llm_evidence_cols),
+        llm_score_cols     = isolate(input$llm_score_cols),
         unit_id_col        = isolate(input$unit_id_col),
         coder_cols         = isolate(input$coder_cols),
         agreement_has_gold = isolate(input$agreement_has_gold),
@@ -904,20 +962,42 @@ qlm_app <- function(base_dir = getwd()) {
             } else {
               tagList(
                 selectInput(
-                  "llm_output_col", "LLM output column (required):",
+                  "llm_output_cols", "LLM output columns (select one or more):",
                   choices = cols,
+                  multiple = TRUE,
                   selected = {
-                    sel <- if (!is.null(st) && !is.null(st$llm_output_col)) st$llm_output_col else NULL
-                    if (!is.null(sel) && sel %in% cols) sel else cols[[1]]
+                    sel <- if (!is.null(st) && !is.null(st$llm_output_cols)) {
+                      st$llm_output_cols
+                    } else if (!is.null(st) && !is.null(st$llm_output_col)) {
+                      st$llm_output_col  # backward compat
+                    } else NULL
+                    if (!is.null(sel)) intersect(sel, cols) else cols[[1]]
                   }
                 ),
                 selectInput(
-                  "llm_evidence_col", "LLM justification column (optional):",
-                  choices = c("None", cols),
+                  "llm_evidence_cols", "LLM justification columns (optional):",
+                  choices = cols,
+                  multiple = TRUE,
                   selected = {
-                    sel <- if (!is.null(st) && !is.null(st$llm_evidence_col)) st$llm_evidence_col else "None"
-                    if (!is.null(sel) && sel %in% c("None", cols)) sel else "None"
+                    sel <- if (!is.null(st) && !is.null(st$llm_evidence_cols)) {
+                      st$llm_evidence_cols
+                    } else if (!is.null(st) && !is.null(st$llm_evidence_col) &&
+                               !identical(st$llm_evidence_col, "None")) {
+                      st$llm_evidence_col  # backward compat
+                    } else NULL
+                    if (!is.null(sel)) intersect(sel, cols) else NULL
                   }
+                ),
+                selectInput(
+                  "llm_score_cols", "LLM score columns (optional, numeric):",
+                  choices = cols,
+                  multiple = TRUE,
+                  selected = if (!is.null(st) && !is.null(st$llm_score_cols)) {
+                    intersect(st$llm_score_cols, cols)
+                  } else NULL
+                ),
+                helpText(
+                  tags$small("Select multiple columns to compare outputs from different LLMs.")
                 ),
                 selectInput(
                   "meta_cols", "Metadata columns (optional):",
@@ -1012,19 +1092,15 @@ qlm_app <- function(base_dir = getwd()) {
       if (mode %in% c("blind", "llm")) {
         txt <- input$text_col
         if (is.null(txt) || !(txt %in% names(dataset()))) return()
-        if (mode == "llm") req(input$llm_output_col)
+        if (mode == "llm") req(input$llm_output_cols)
         hc <<- humancheck_server(
           id   = "hc",
           data = reactive(dataset()),
           text_col = reactive(txt),
           blind    = reactive(mode == "blind"),
-          llm_output_col = reactive(if (mode == "llm") req(input$llm_output_col) else NULL),
-          llm_evidence_col = reactive({
-            if (mode == "llm") {
-              col <- input$llm_evidence_col
-              if (is.null(col) || identical(col, "None")) NULL else col
-            } else NULL
-          }),
+          llm_output_cols = reactive(if (mode == "llm") input$llm_output_cols else NULL),
+          llm_evidence_cols = reactive(if (mode == "llm") input$llm_evidence_cols else NULL),
+          llm_score_cols = reactive(if (mode == "llm") input$llm_score_cols else NULL),
           original_file_name = reactive({
             lf <- last_file()
             if (is.null(lf) || !nzchar(lf)) "quallmer_coding/unknown.csv" else lf
@@ -1039,8 +1115,9 @@ qlm_app <- function(base_dir = getwd()) {
     observeEvent(input$mode,               save_state, ignoreInit = FALSE)
     observeEvent(input$text_col,           save_state, ignoreInit = TRUE)
     observeEvent(input$meta_cols,          save_state, ignoreInit = TRUE)
-    observeEvent(input$llm_output_col,     save_state, ignoreInit = TRUE)
-    observeEvent(input$llm_evidence_col,   save_state, ignoreInit = TRUE)
+    observeEvent(input$llm_output_cols,    save_state, ignoreInit = TRUE)
+    observeEvent(input$llm_evidence_cols,  save_state, ignoreInit = TRUE)
+    observeEvent(input$llm_score_cols,     save_state, ignoreInit = TRUE)
     observeEvent(input$unit_id_col,        save_state, ignoreInit = TRUE)
     observeEvent(input$coder_cols,         save_state, ignoreInit = TRUE)
     observeEvent(input$agreement_has_gold, save_state, ignoreInit = TRUE)
@@ -1367,6 +1444,7 @@ qlm_app <- function(base_dir = getwd()) {
         # Krippendorff's alpha (available for all levels)
         alpha_name <- paste0("alpha_", level)
         alpha <- suppressWarnings(as.numeric(lst[[alpha_name]]))
+        if (length(alpha) == 0) alpha <- NA_real_
 
         txt_alpha <- if (is.na(alpha)) {
           "Krippendorff's alpha unavailable."
@@ -1382,6 +1460,7 @@ qlm_app <- function(base_dir = getwd()) {
         # Kappa (nominal and ordinal)
         if (level %in% c("nominal", "ordinal")) {
           kappa <- suppressWarnings(as.numeric(lst[["kappa"]]))
+          if (length(kappa) == 0) kappa <- NA_real_
           kappa_type <- lst[["kappa_type"]]
 
           # Landis & Koch for kappa
@@ -1414,6 +1493,7 @@ qlm_app <- function(base_dir = getwd()) {
         # ICC (interval/ratio)
         if (level %in% c("interval", "ratio")) {
           icc <- suppressWarnings(as.numeric(lst[["icc"]]))
+          if (length(icc) == 0) icc <- NA_real_
           txt_icc <- if (is.na(icc)) {
             "ICC unavailable."
           } else if (icc >= 0.75) {
@@ -1431,6 +1511,7 @@ qlm_app <- function(base_dir = getwd()) {
         # Correlation metrics
         if (level == "ordinal") {
           rho <- suppressWarnings(as.numeric(lst[["rho"]]))
+          if (length(rho) == 0) rho <- NA_real_
           if (!is.na(rho)) {
             interpretation_items[[length(interpretation_items) + 1]] <- tags$li(
               sprintf("Spearman's rho = %.2f (rank correlation)", rho)
@@ -1438,6 +1519,7 @@ qlm_app <- function(base_dir = getwd()) {
           }
         } else if (level %in% c("interval", "ratio")) {
           r <- suppressWarnings(as.numeric(lst[["r"]]))
+          if (length(r) == 0) r <- NA_real_
           if (!is.na(r)) {
             interpretation_items[[length(interpretation_items) + 1]] <- tags$li(
               sprintf("Pearson's r = %.2f (linear correlation)", r)
@@ -1459,14 +1541,17 @@ qlm_app <- function(base_dir = getwd()) {
 
         level <- input$measurement_level
         interpretation_items <- list()
-        fmt <- function(x) if (is.na(x)) "NA" else sprintf("%.2f", x)
+        # Helper to safely format values (handle length-zero and NA)
+        fmt <- function(x) {
+          if (length(x) == 0 || is.na(x)) "NA" else sprintf("%.2f", x)
+        }
 
         score_label <- function(x) {
-          if (is.na(x))            "unavailable"
-          else if (x >= 0.90)      "excellent"
-          else if (x >= 0.80)      "good"
-          else if (x >= 0.70)      "fair"
-          else                     "low"
+          if (length(x) == 0 || is.na(x)) "unavailable"
+          else if (x >= 0.90)             "excellent"
+          else if (x >= 0.80)             "good"
+          else if (x >= 0.70)             "fair"
+          else                            "low"
         }
 
         if (level == "nominal") {
