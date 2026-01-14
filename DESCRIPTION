@@ -35,7 +35,7 @@ Imports:
 Suggests:
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
-URL: https://seraphinem.github.io/quallmer.app/
+URL: https://quallmer.github.io/quallmer.app/
 BugReports: https://github.com/SeraphineM/quallmer.app/issues
 Depends: 
     R (>= 3.5)

@@ -50,4 +50,4 @@ This package requires the `quallmer` package to be installed.
 
 ## Documentation
 
-For more information about the quallmer ecosystem, see the main [quallmer package documentation](https://seraphinem.github.io/quallmer/).
+For more information about the quallmer ecosystem, see the main [quallmer package documentation](https://quallmer.github.io/quallmer/).
