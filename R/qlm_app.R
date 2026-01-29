@@ -255,6 +255,18 @@ humancheck_server <- function(
       )
     })
 
+    results_path <- reactive({
+      base_path <- req(original_file_name())
+      out_dir   <- dirname(base_path)
+      file.path(
+        out_dir,
+        paste0(
+          tools::file_path_sans_ext(basename(base_path)),
+          "_results.rds"
+        )
+      )
+    })
+
     # Atomic save of full dataframe + last_index
     save_now <- function() {
       if (is.null(rv$df)) return(invisible(NULL))
@@ -279,6 +291,52 @@ humancheck_server <- function(
         TRUE
       }, error = function(e) FALSE)
       if (!ok && file.exists(tmp)) try(unlink(tmp), silent = TRUE)
+
+      # Also save results as qlm_coded object
+      rp <- tryCatch(results_path(), error = function(e) NULL)
+      if (!is.null(rp) && nzchar(rp)) {
+        tmp_res <- tempfile("results_", tmpdir = dirname(rp), fileext = ".rds")
+        ok_res <- tryCatch({
+          # Prepare data frame with .id column for qlm_coded
+          results_df <- rv$df
+          if (".row_id" %in% names(results_df) && !".id" %in% names(results_df)) {
+            results_df$.id <- results_df$.row_id
+          }
+          if (!".id" %in% names(results_df)) {
+            results_df$.id <- seq_len(nrow(results_df))
+          }
+
+          # Determine coder name based on mode
+          base_name <- tools::file_path_sans_ext(basename(original_file_name()))
+          coder_name <- if (isTRUE(blind())) {
+            paste0(base_name, "_manual")
+          } else {
+            paste0(base_name, "_llm_checked")
+          }
+
+          # Wrap as qlm_coded object
+          results_coded <- quallmer::as_qlm_coded(
+            results_df,
+            name = coder_name,
+            metadata = list(
+              source_file = original_file_name(),
+              mode = if (isTRUE(blind())) "manual_coding" else "llm_checking"
+            )
+          )
+
+          saveRDS(results_coded, tmp_res, compress = "gzip")
+          if (!file.rename(tmp_res, rp)) {
+            if (file.copy(tmp_res, rp, overwrite = TRUE)) {
+              unlink(tmp_res)
+            } else {
+              cli::cli_abort("File copy operation failed.")
+            }
+          }
+          TRUE
+        }, error = function(e) FALSE)
+        if (!ok_res && file.exists(tmp_res)) try(unlink(tmp_res), silent = TRUE)
+      }
+
       invisible(NULL)
     }
 
@@ -801,7 +859,7 @@ qlm_app <- function(base_dir = getwd()) {
         uiOutput("column_selectors"),
         br(),
         helpText(
-          "Progress is saved to *_assessed.rds in your specified folder"
+          "Progress is saved to *_assessed.rds (with resume info) and *_results.rds (data frame with .id column) in your specified folder"
         )
       ),
       mainPanel(uiOutput("main_content"))
