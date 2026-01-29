@@ -48,13 +48,16 @@ highlight_query <- function(text, query) {
 
 #' @noRd
 prepare_comparison_data <- function(df, unit_id_col, coder_cols, code_var_name = "code") {
-  # Transform wide-format data (one column per coder) into list of data frames
+  # Transform wide-format data (one column per coder) into list of qlm_coded objects
   # suitable for qlm_compare()
   lapply(stats::setNames(coder_cols, coder_cols), function(coder_name) {
-    data.frame(
-      .id = df[[unit_id_col]],
-      code = df[[coder_name]],
-      stringsAsFactors = FALSE
+    quallmer::as_qlm_coded(
+      data.frame(
+        .id = df[[unit_id_col]],
+        code = df[[coder_name]],
+        stringsAsFactors = FALSE
+      ),
+      name = coder_name
     )
   })
 }
@@ -298,13 +301,9 @@ humancheck_server <- function(
         tmp_res <- tempfile("results_", tmpdir = dirname(rp), fileext = ".rds")
         ok_res <- tryCatch({
           # Prepare data frame with .id column for qlm_coded
+          # .id should contain row numbers only (not "row_..." strings)
           results_df <- rv$df
-          if (".row_id" %in% names(results_df) && !".id" %in% names(results_df)) {
-            results_df$.id <- results_df$.row_id
-          }
-          if (!".id" %in% names(results_df)) {
-            results_df$.id <- seq_len(nrow(results_df))
-          }
+          results_df$.id <- seq_len(nrow(results_df))
 
           # Determine coder name based on mode
           base_name <- tools::file_path_sans_ext(basename(original_file_name()))
@@ -1323,64 +1322,73 @@ qlm_app <- function(base_dir = getwd()) {
           # Identify non-gold coders
           non_gold_coders <- setdiff(coder_cols, gold)
 
-          # Create gold standard data frame
-          gold_df <- data.frame(
-            .id = df[[unit_id]],
-            code = df[[gold]],
-            stringsAsFactors = FALSE
+          # Create gold standard data frame as qlm_coded object with is_gold flag
+          gold_df <- quallmer::as_qlm_coded(
+            data.frame(
+              .id = df[[unit_id]],
+              code = df[[gold]],
+              stringsAsFactors = FALSE
+            ),
+            name = gold,
+            is_gold = TRUE
           )
 
           # Validate each non-gold coder against gold standard
           level <- input$measurement_level
-          confusion_matrices <- list()
 
           results <- lapply(non_gold_coders, function(coder_name) {
-            # Create prediction data frame
-            pred_df <- data.frame(
-              .id = df[[unit_id]],
-              code = df[[coder_name]],
-              stringsAsFactors = FALSE
+            # Create prediction data frame as qlm_coded object
+            pred_df <- quallmer::as_qlm_coded(
+              data.frame(
+                .id = df[[unit_id]],
+                code = df[[coder_name]],
+                stringsAsFactors = FALSE
+              ),
+              name = coder_name
             )
 
-            # Call qlm_validate
+            # Call qlm_validate (new API returns data frame)
             validation <- quallmer::qlm_validate(
-              x = pred_df,
+              pred_df,
               gold = gold_df,
               by = code,
               level = level,
               average = "macro"
             )
 
-            # Store confusion matrix for nominal level
-            if (level == "nominal" && !is.null(validation$confusion)) {
-              confusion_matrices[[coder_name]] <<- validation$confusion
+            # Helper to extract metric value from data frame
+            get_metric <- function(df, metric_name) {
+              row <- df[df$measure == metric_name, , drop = FALSE]
+              if (nrow(row) > 0) row$value[1] else NA_real_
             }
+
+            # Note: confusion matrix is no longer exposed in qlm_validate API
 
             # Extract metrics based on measurement level
             if (level == "nominal") {
               data.frame(
                 coder = coder_name,
-                accuracy = validation$accuracy,
-                precision = validation$precision,
-                recall = validation$recall,
-                f1 = validation$f1,
+                accuracy = get_metric(validation, "accuracy"),
+                precision = get_metric(validation, "precision"),
+                recall = get_metric(validation, "recall"),
+                f1 = get_metric(validation, "f1"),
                 stringsAsFactors = FALSE
               )
             } else if (level == "ordinal") {
               data.frame(
                 coder = coder_name,
-                rho = validation$rho,
-                tau = validation$tau,
-                mae = validation$mae,
+                rho = get_metric(validation, "rho"),
+                tau = get_metric(validation, "tau"),
+                mae = get_metric(validation, "mae"),
                 stringsAsFactors = FALSE
               )
             } else if (level %in% c("interval", "ratio")) {
               data.frame(
                 coder = coder_name,
-                r = validation$r,
-                icc = validation$icc,
-                mae = validation$mae,
-                rmse = validation$rmse,
+                r = get_metric(validation, "r"),
+                icc = get_metric(validation, "icc"),
+                mae = get_metric(validation, "mae"),
+                rmse = get_metric(validation, "rmse"),
                 stringsAsFactors = FALSE
               )
             }
@@ -1389,10 +1397,10 @@ qlm_app <- function(base_dir = getwd()) {
           # Combine results into single data frame
           metrics_df <- do.call(rbind, results)
 
-          # Return both metrics and confusion matrices
+          # Return metrics (confusion matrices no longer available in new API)
           list(
             metrics = metrics_df,
-            confusion_matrices = if (length(confusion_matrices) > 0) confusion_matrices else NULL
+            confusion_matrices = NULL
           )
         }, error = function(e) e)
 
@@ -1437,31 +1445,45 @@ qlm_app <- function(base_dir = getwd()) {
           c(coder_dfs, list(by = quote(code), level = input$measurement_level, tolerance = 0))
         )
 
+        # Helper to extract metric value from comparison data frame
+        get_metric <- function(df, metric_name) {
+          row <- df[df$measure == metric_name, , drop = FALSE]
+          if (nrow(row) > 0) row$value[1] else NA_real_
+        }
+
         # Extract metrics into a named list format
         level <- input$measurement_level
         metrics <- list()
 
         if (level == "nominal") {
-          metrics$alpha_nominal <- comparison$alpha_nominal
-          metrics$kappa <- comparison$kappa
-          metrics$kappa_type <- comparison$kappa_type
-          metrics$percent_agreement <- comparison$percent_agreement
+          metrics$alpha_nominal <- get_metric(comparison, "alpha_nominal")
+          metrics$kappa <- get_metric(comparison, "kappa")
+          # kappa_type is now stored as attribute or in a separate column
+          kappa_row <- comparison[comparison$measure == "kappa", , drop = FALSE]
+          if (nrow(kappa_row) > 0 && "kappa_type" %in% names(kappa_row)) {
+            metrics$kappa_type <- kappa_row$kappa_type[1]
+          } else {
+            metrics$kappa_type <- attr(comparison, "kappa_type")
+          }
+          metrics$percent_agreement <- get_metric(comparison, "percent_agreement")
         } else if (level == "ordinal") {
-          metrics$alpha_ordinal <- comparison$alpha_ordinal
-          if (!is.null(comparison$kappa_weighted)) metrics$kappa_weighted <- comparison$kappa_weighted
-          metrics$w <- comparison$w
-          metrics$rho <- comparison$rho
-          metrics$percent_agreement <- comparison$percent_agreement
+          metrics$alpha_ordinal <- get_metric(comparison, "alpha_ordinal")
+          kappa_w <- get_metric(comparison, "kappa_weighted")
+          if (!is.na(kappa_w)) metrics$kappa_weighted <- kappa_w
+          metrics$w <- get_metric(comparison, "w")
+          metrics$rho <- get_metric(comparison, "rho")
+          metrics$percent_agreement <- get_metric(comparison, "percent_agreement")
         } else if (level %in% c("interval", "ratio")) {
           alpha_name <- paste0("alpha_", level)
-          metrics[[alpha_name]] <- comparison[[alpha_name]]
-          metrics$icc <- comparison$icc
-          metrics$r <- comparison$r
-          metrics$percent_agreement <- comparison$percent_agreement
+          metrics[[alpha_name]] <- get_metric(comparison, alpha_name)
+          metrics$icc <- get_metric(comparison, "icc")
+          metrics$r <- get_metric(comparison, "r")
+          metrics$percent_agreement <- get_metric(comparison, "percent_agreement")
         }
 
-        metrics$subjects <- comparison$subjects
-        metrics$raters <- comparison$raters
+        # subjects (n) and raters are now attributes
+        metrics$subjects <- attr(comparison, "n")
+        metrics$raters <- attr(comparison, "raters")
 
         metrics
       }, error = function(e) e)
