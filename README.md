@@ -15,7 +15,7 @@ Interactive Shiny Application for Quallmer Validation
 ```r
 # Install from GitHub
 # install.packages("pak")
-pak::pak("SeraphineM/quallmer.app")
+pak::pak("quallmer/quallmer.app")
 ```
 
 ## Usage

@@ -26,3 +26,12 @@ and validation / agreement calculation.
 and optionally specify a gold-standard coder.
 }
 }
+\examples{
+\dontrun{
+# Launch the app
+qlm_app()
+
+# Use a temporary directory (useful for testing)
+qlm_app(base_dir = tempdir())
+}
+}
