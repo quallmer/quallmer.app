@@ -1474,8 +1474,8 @@ qlm_app <- function(base_dir = getwd()) {
           metrics$rho <- get_metric(comparison, "rho")
           metrics$percent_agreement <- get_metric(comparison, "percent_agreement")
         } else if (level %in% c("interval", "ratio")) {
-          alpha_name <- paste0("alpha_", level)
-          metrics[[alpha_name]] <- get_metric(comparison, alpha_name)
+          # Note: quallmer uses alpha_interval for both interval and ratio levels
+          metrics$alpha_interval <- get_metric(comparison, "alpha_interval")
           metrics$icc <- get_metric(comparison, "icc")
           metrics$r <- get_metric(comparison, "r")
           metrics$percent_agreement <- get_metric(comparison, "percent_agreement")
@@ -1556,7 +1556,8 @@ qlm_app <- function(base_dir = getwd()) {
         interpretation_items <- list()
 
         # Krippendorff's alpha (available for all levels)
-        alpha_name <- paste0("alpha_", level)
+        # Note: quallmer uses alpha_interval for both interval and ratio levels
+        alpha_name <- if (level %in% c("interval", "ratio")) "alpha_interval" else paste0("alpha_", level)
         alpha <- suppressWarnings(as.numeric(lst[[alpha_name]]))
         if (length(alpha) == 0) alpha <- NA_real_
 
