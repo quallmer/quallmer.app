@@ -796,6 +796,14 @@ humancheck_server <- function(
 #'
 #' @return A shiny.appobj
 #' @export
+#' @examples
+#' \dontrun{
+#' # Launch the app
+#' qlm_app()
+#'
+#' # Use a temporary directory (useful for testing)
+#' qlm_app(base_dir = tempdir())
+#' }
 qlm_app <- function(base_dir = getwd()) {
   ui <- fluidPage(
     theme = bs_theme(
