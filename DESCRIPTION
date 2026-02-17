@@ -1,5 +1,5 @@
 Package: quallmer.app
-Title: Interactive Validation App for Quallmer
+Title: Interactive Validation App for 'quallmer'
 Version: 0.1.0
 Authors@R: c(
     person(
@@ -14,12 +14,16 @@ Authors@R: c(
     )
   )
 Description: Companion package to 'quallmer' providing an interactive 'shiny'
-    application for manual coding, reviewing large language model (LLM) generated
-    annotations, and computing inter-rater reliability metrics. Supports three
-    modes: blind manual coding, LLM output validation, and agreement calculation.
-    Computes standard reliability metrics including Krippendorff's alpha,
-    Cohen's kappa, Fleiss' kappa, intraclass correlation coefficient (ICC),
-    and percent agreement for nominal, ordinal, interval, and ratio data.
+    application for manual coding, reviewing large language model (LLM)
+    generated annotations, and computing inter-rater reliability metrics.
+    Supports three modes: blind manual coding, LLM output validation, and
+    agreement calculation. Computes standard reliability metrics including
+    Krippendorff's alpha (Krippendorff 2019 <doi:10.4135/9781071878781>),
+    Cohen's kappa, Fleiss' kappa (Fleiss 1971 <doi:10.1037/h0031619>),
+    intraclass correlation coefficient (ICC), and percent agreement for
+    nominal, ordinal, interval, and ratio data. Also computes gold-standard
+    validation metrics including accuracy, precision, recall, and F1 scores
+    following Sokolova and Lapalme (2009 <doi:10.1016/j.ipm.2009.03.002>).
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
