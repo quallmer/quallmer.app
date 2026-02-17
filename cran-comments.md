@@ -2,21 +2,19 @@
 
 ## R CMD check results
 
-0 errors | 0 warnings | 1 note
+0 errors | 0 warnings | 2 notes
 
 * This is a new submission.
 
-## Note explanation
+## Note explanations
 
-* The NOTE about HTML Tidy is a local environment issue and does not affect
+* NOTE 1: "New submission" - This is expected for a new package.
+* NOTE 2: The NOTE about HTML Tidy is a local environment issue and does not affect
   the package functionality.
 
 ## Dependency note
 
-This package depends on 'quallmer' which is currently available on GitHub
-at <https://github.com/quallmer/quallmer>. The 'quallmer' package has been
-submitted to CRAN and is awaiting review. This submission is intended to
-be processed after 'quallmer' is accepted.
+This package depends on 'quallmer' which is available on CRAN.
 
 ## Test environments
 
