@@ -31,6 +31,16 @@ read_data_file <- function(path, name) {
 #' @noRd
 preview_head <- function(df, n = 10) utils::head(df, n)
 
+#' Check if folder name contains Windows-incompatible characters
+#' @noRd
+is_valid_folder_name <- function(folder) {
+  if (is.null(folder) || !nzchar(trimws(folder))) return(FALSE)
+  # Characters not allowed in Windows folder names
+
+  invalid_chars <- c(":", "*", "?", "\"", "<", ">", "|", "\\", "/")
+  !any(sapply(invalid_chars, function(ch) grepl(ch, folder, fixed = TRUE)))
+}
+
 #' @noRd
 escape_regex <- function(x) gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", x)
 
@@ -805,13 +815,29 @@ humancheck_server <- function(
 #' qlm_app(base_dir = tempdir())
 #' }
 qlm_app <- function(base_dir = getwd()) {
+  # Try to load Google Fonts with fallback to system fonts for offline/restricted environments
+
+  base_font <- tryCatch(
+    font_google("Inter", local = TRUE),
+    error = function(e) {
+      message("Note: Could not load Google Fonts. Using system fonts as fallback.")
+      font_collection("-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "sans-serif")
+    }
+  )
+  heading_font <- tryCatch(
+    font_google("Inter", local = TRUE),
+    error = function(e) {
+      font_collection("-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "sans-serif")
+    }
+  )
+
   ui <- fluidPage(
     theme = bs_theme(
       version        = 5,
       bootswatch     = "flatly",
-      base_font      = font_google("Inter", local = TRUE),
-      heading_font   = font_google("Inter", local = TRUE),
-      code_font      = font_collection("Fira Mono", "Consolas"),
+      base_font      = base_font,
+      heading_font   = heading_font,
+      code_font      = font_collection("Fira Mono", "Consolas", "monospace"),
       "font-size-base" = ".85rem",
       "primary"      = "#5A6F8F"
     ),
@@ -879,7 +905,7 @@ qlm_app <- function(base_dir = getwd()) {
 
     state_path <- reactive({
       folder <- input$folder_name
-      if (is.null(folder) || !nzchar(trimws(folder))) return(NULL)
+      if (!is_valid_folder_name(folder)) return(NULL)
       file.path(base_dir, trimws(folder), ".app_state.rds")
     })
     hc         <- NULL
@@ -986,7 +1012,18 @@ qlm_app <- function(base_dir = getwd()) {
         return()
       }
 
-      coding_dir <- file.path(base_dir, trimws(folder))
+      # Validate folder name for cross-platform compatibility (Windows restrictions)
+      folder_clean <- trimws(folder)
+      if (!is_valid_folder_name(folder_clean)) {
+        showNotification(
+          "Folder name contains invalid characters. Avoid: : * ? \" < > | \\ /",
+          type = "error",
+          duration = 5
+        )
+        return()
+      }
+
+      coding_dir <- file.path(base_dir, folder_clean)
       dir.create(coding_dir, showWarnings = FALSE, recursive = TRUE)
       dest <- normalizePath(
         file.path(coding_dir, input$file$name),
@@ -1202,7 +1239,7 @@ qlm_app <- function(base_dir = getwd()) {
           llm_score_cols = reactive(if (mode == "llm") input$llm_score_cols else NULL),
           original_file_name = reactive({
             lf <- last_file()
-            if (is.null(lf) || !nzchar(lf)) "quallmer_coding/unknown.csv" else lf
+            if (is.null(lf) || !nzchar(lf)) file.path("quallmer_coding", "unknown.csv") else lf
           }),
           meta_cols = reactive(if (mode %in% c("blind", "llm")) input$meta_cols else character())
         )
@@ -1825,5 +1862,5 @@ qlm_app <- function(base_dir = getwd()) {
 # Run the app if executed directly
 if (identical(environment(), globalenv()) &&
     !length(commandArgs(trailingOnly = TRUE))) {
-  validate_app()
+  qlm_app()
 }
