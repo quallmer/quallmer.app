@@ -1,5 +1,7 @@
 # quallmer.app
 
+[![R-CMD-check](https://github.com/quallmer/quallmer.app/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/quallmer/quallmer.app/actions/workflows/R-CMD-check.yaml)
+
 Interactive Shiny Application for Quallmer Validation
 
 ## Overview
