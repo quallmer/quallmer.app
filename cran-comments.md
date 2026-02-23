@@ -1,5 +1,27 @@
 # CRAN Submission Comments
 
+## Resubmission
+
+This is a resubmission. In this version I have:
+
+* Replaced `\dontrun{}` with `if(interactive()){}` for Shiny app examples,
+  as these functions are intended for interactive use only.
+
+## Recent improvements
+
+* Added Google Fonts fallback to system fonts for offline/restricted environments
+* Added folder name validation for Windows-incompatible characters
+* Improved cross-platform path handling using `file.path()`
+
+## Cross-platform bug fixes
+
+* Fixed "invalid subscript type 'list'" error on Linux/Windows by adding defensive
+  type coercion for column name inputs restored from saved state
+* Added `safe_character()` helper to handle list-to-vector coercion consistently
+* Fixed `intersect()` calls in state restoration that could preserve list structure
+* Added UTF-8 encoding to CSV file reading for proper character handling on Windows
+* Improved metrics list conversion to safely handle NULL and mixed types
+
 ## R CMD check results
 
 0 errors | 0 warnings | 2 notes

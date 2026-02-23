@@ -32,18 +32,18 @@ This dataset is useful for:
 }
 }
 \examples{
-\dontrun{
-# Option 1: Use the pre-made sample file from the package
-# Get the path to the sample data file
-sample_file <- system.file("extdata", "sample_data.rds", package = "quallmer.app")
+if (interactive()) {
+  # Option 1: Use the pre-made sample file from the package
+  # Get the path to the sample data file
+  sample_file <- system.file("extdata", "sample_data.rds", package = "quallmer.app")
 
-# Launch the app and upload this file through the UI
-qlm_app()
+  # Launch the app and upload this file through the UI
+  qlm_app()
 
-# Option 2: Load the data and save your own copy
-data(sample_data)
-saveRDS(sample_data, "my_sample.rds")
-# Then load my_sample.rds in qlm_app()
+  # Option 2: Load the data and save your own copy
+  data(sample_data)
+  saveRDS(sample_data, "my_sample.rds")
+  # Then load my_sample.rds in qlm_app()
 }
 }
 \keyword{datasets}

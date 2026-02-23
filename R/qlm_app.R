@@ -17,12 +17,21 @@ na_to_empty <- function(x) {
   x
 }
 
+#' Safely coerce to character vector (handles lists from state restoration)
+#' @noRd
+safe_character <- function(x) {
+
+  if (is.null(x)) return(NULL)
+  as.character(unlist(x))
+}
+
 #' @noRd
 read_data_file <- function(path, name) {
   if (grepl("\\.rds$", name, ignore.case = TRUE)) {
     readRDS(path)
   } else if (grepl("\\.csv$", name, ignore.case = TRUE)) {
-    utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
+    utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE,
+                    fileEncoding = "UTF-8")
   } else {
     cli::cli_abort("Unsupported file type. Please select a {.file .rds} or {.file .csv} file.")
   }
@@ -807,12 +816,12 @@ humancheck_server <- function(
 #' @return A shiny.appobj
 #' @export
 #' @examples
-#' \dontrun{
-#' # Launch the app
-#' qlm_app()
+#' if (interactive()) {
+#'   # Launch the app
+#'   qlm_app()
 #'
-#' # Use a temporary directory (useful for testing)
-#' qlm_app(base_dir = tempdir())
+#'   # Use a temporary directory (useful for testing)
+#'   qlm_app(base_dir = tempdir())
 #' }
 qlm_app <- function(base_dir = getwd()) {
   # Try to load Google Fonts with fallback to system fonts for offline/restricted environments
@@ -1092,7 +1101,7 @@ qlm_app <- function(base_dir = getwd()) {
                 "meta_cols", "Metadata columns (optional):",
                 choices = cols, multiple = TRUE,
                 selected = if (!is.null(st) && !is.null(st$meta_cols)) {
-                  intersect(st$meta_cols, cols)
+                  safe_character(intersect(safe_character(st$meta_cols), cols))
                 } else NULL
               )
             } else {
@@ -1103,9 +1112,9 @@ qlm_app <- function(base_dir = getwd()) {
                   multiple = TRUE,
                   selected = {
                     sel <- if (!is.null(st) && !is.null(st$llm_output_cols)) {
-                      st$llm_output_cols
+                      safe_character(st$llm_output_cols)
                     } else if (!is.null(st) && !is.null(st$llm_output_col)) {
-                      st$llm_output_col  # backward compat
+                      safe_character(st$llm_output_col)  # backward compat
                     } else NULL
                     if (!is.null(sel)) intersect(sel, cols) else cols[[1]]
                   }
@@ -1116,10 +1125,10 @@ qlm_app <- function(base_dir = getwd()) {
                   multiple = TRUE,
                   selected = {
                     sel <- if (!is.null(st) && !is.null(st$llm_evidence_cols)) {
-                      st$llm_evidence_cols
+                      safe_character(st$llm_evidence_cols)
                     } else if (!is.null(st) && !is.null(st$llm_evidence_col) &&
                                !identical(st$llm_evidence_col, "None")) {
-                      st$llm_evidence_col  # backward compat
+                      safe_character(st$llm_evidence_col)  # backward compat
                     } else NULL
                     if (!is.null(sel)) intersect(sel, cols) else NULL
                   }
@@ -1129,7 +1138,7 @@ qlm_app <- function(base_dir = getwd()) {
                   choices = cols,
                   multiple = TRUE,
                   selected = if (!is.null(st) && !is.null(st$llm_score_cols)) {
-                    intersect(st$llm_score_cols, cols)
+                    safe_character(intersect(safe_character(st$llm_score_cols), cols))
                   } else NULL
                 ),
                 helpText(
@@ -1139,7 +1148,7 @@ qlm_app <- function(base_dir = getwd()) {
                   "meta_cols", "Metadata columns (optional):",
                   choices = cols, multiple = TRUE,
                   selected = if (!is.null(st) && !is.null(st$meta_cols)) {
-                    intersect(st$meta_cols, cols)
+                    safe_character(intersect(safe_character(st$meta_cols), cols))
                   } else NULL
                 )
               )
@@ -1149,17 +1158,16 @@ qlm_app <- function(base_dir = getwd()) {
           tagList(
             selectInput(
               "unit_id_col", "Unit ID column:", choices = cols,
-              selected = if (!is.null(st) &&
-                             !is.null(st$unit_id_col) &&
-                             st$unit_id_col %in% cols) {
-                st$unit_id_col
-              } else NULL
+              selected = {
+                sel <- safe_character(st$unit_id_col)
+                if (!is.null(sel) && length(sel) > 0 && sel[1] %in% cols) sel[1] else NULL
+              }
             ),
             selectInput(
               "coder_cols", "Coder columns (multiple):",
               choices = cols, multiple = TRUE,
               selected = if (!is.null(st) && !is.null(st$coder_cols)) {
-                intersect(st$coder_cols, cols)
+                safe_character(intersect(safe_character(st$coder_cols), cols))
               } else NULL
             ),
             checkboxInput(
@@ -1202,10 +1210,10 @@ qlm_app <- function(base_dir = getwd()) {
       } else {
         NULL
       }
-      selected_gold <- if (!is.null(st) && !is.null(st$gold_col) &&
-                           st$gold_col %in% cols) {
-        st$gold_col
-      } else NULL
+      selected_gold <- {
+        sel <- safe_character(st$gold_col)
+        if (!is.null(sel) && length(sel) > 0 && sel[1] %in% cols) sel[1] else NULL
+      }
 
       selectInput(
         "gold_col", "Gold-standard coder column:",
@@ -1310,11 +1318,14 @@ qlm_app <- function(base_dir = getwd()) {
     icr_result <- reactive({
       req(dataset(), is.data.frame(dataset()), input$mode == "agreement")
       df         <- dataset()
-      unit_id    <- input$unit_id_col
-      coder_cols <- input$coder_cols
+
+      # Defensive coercion to handle potential list inputs from state restoration
+      unit_id    <- safe_character(input$unit_id_col)
+      if (!is.null(unit_id) && length(unit_id) > 0) unit_id <- unit_id[1]
+      coder_cols <- safe_character(input$coder_cols)
 
       # Validate inputs with helpful error messages
-      if (is.null(unit_id)) {
+      if (is.null(unit_id) || length(unit_id) == 0) {
         return(list(
           kind = "message",
           message = "Please select a Unit ID column."
@@ -1355,7 +1366,8 @@ qlm_app <- function(base_dir = getwd()) {
 
       # Gold-standard mode?
       if (isTRUE(input$agreement_has_gold)) {
-        gold <- input$gold_col
+        gold <- safe_character(input$gold_col)
+        if (!is.null(gold) && length(gold) > 0) gold <- gold[1]
         if (is.null(gold) || !nzchar(gold) || !(gold %in% coder_cols)) {
           return(list(
             kind    = "message",
@@ -1508,7 +1520,9 @@ qlm_app <- function(base_dir = getwd()) {
           if (nrow(kappa_row) > 0 && "kappa_type" %in% names(kappa_row)) {
             metrics$kappa_type <- kappa_row$kappa_type[1]
           } else {
-            metrics$kappa_type <- attr(comparison, "kappa_type")
+            kt <- attr(comparison, "kappa_type")
+            # Use NA instead of NULL to ensure consistent list structure
+            metrics$kappa_type <- if (is.null(kt)) NA_character_ else kt
           }
           metrics$percent_agreement <- get_metric(comparison, "percent_agreement")
         } else if (level == "ordinal") {
@@ -1565,11 +1579,16 @@ qlm_app <- function(base_dir = getwd()) {
       }
 
       if (res$kind == "icr") {
-        # Named list -> long data.frame
+        # Named list -> long data.frame (safely handle NULL and mixed types)
         lst <- res$data
+        # Filter out NULL elements and convert to character for safe display
+        lst <- lst[!vapply(lst, is.null, logical(1))]
         return(data.frame(
           metric = names(lst),
-          value  = unlist(lst, use.names = FALSE),
+          value  = vapply(lst, function(x) {
+            if (is.null(x) || length(x) == 0) NA_character_
+            else as.character(x[1])
+          }, character(1)),
           stringsAsFactors = FALSE
         ))
       }
