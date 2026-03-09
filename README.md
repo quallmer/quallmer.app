@@ -53,3 +53,7 @@ This package requires the `quallmer` package to be installed.
 ## Documentation
 
 For more information about the quallmer ecosystem, see the main [quallmer package documentation](https://quallmer.github.io/quallmer/).
+
+## Acknowledgments
+
+Development of this package was assisted by Claude Code, an AI coding assistant by Anthropic, for code refactoring, documentation updates, and package restructuring.
